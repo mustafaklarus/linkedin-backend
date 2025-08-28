@@ -1,7 +1,12 @@
-const axios = require('axios');
-const jwt = require('jsonwebtoken');
+import axios from 'axios';
+import jwt from 'jsonwebtoken';
 
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   const { code, state, error } = req.query;
 
   if (error) {
@@ -32,8 +37,8 @@ export default async function handler(req, res) {
 
     const { access_token, expires_in } = tokenResponse.data;
 
-    // Get user profile
-    const profileResponse = await axios.get('https://api.linkedin.com/v2/me', {
+    // Get user profile using current LinkedIn API v2
+    const profileResponse = await axios.get('https://api.linkedin.com/v2/userinfo', {
       headers: {
         'Authorization': `Bearer ${access_token}`
       }
@@ -43,9 +48,10 @@ export default async function handler(req, res) {
 
     // Create JWT token
     const token = jwt.sign({
-      linkedinId: profile.id,
-      firstName: profile.localizedFirstName,
-      lastName: profile.localizedLastName,
+      linkedinId: profile.sub,
+      firstName: profile.given_name,
+      lastName: profile.family_name,
+      email: profile.email,
       accessToken: access_token,
       tokenExpiry: Date.now() + (expires_in * 1000)
     }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -59,14 +65,18 @@ export default async function handler(req, res) {
     res.status(200).json({
       success: true,
       user: {
-        id: profile.id,
-        firstName: profile.localizedFirstName,
-        lastName: profile.localizedLastName
+        id: profile.sub,
+        firstName: profile.given_name,
+        lastName: profile.family_name,
+        email: profile.email
       }
     });
 
   } catch (err) {
     console.error('Callback error:', err.response?.data || err.message);
-    res.status(500).json({ error: "LinkedIn authentication failed" });
+    res.status(500).json({ 
+      error: "LinkedIn authentication failed",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 }
