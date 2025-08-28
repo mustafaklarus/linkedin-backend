@@ -1,47 +1,69 @@
-import axios from "axios";
-import jwt from "jsonwebtoken";
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
 
 export default async function handler(req, res) {
-  if (req.method !== "POST")
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
+  }
 
   try {
-    const cookie = req.headers.cookie?.split("session=")[1];
-    if (!cookie) return res.status(401).json({ error: "Not logged in" });
-
-    const { access_token } = jwt.verify(cookie, process.env.JWT_SECRET);
-
     const { text } = req.body;
 
-    // Fetch user's URN (needed for posting)
-    const me = await axios.get("https://api.linkedin.com/v2/me", {
-      headers: { Authorization: `Bearer ${access_token}` },
-    });
+    if (!text || text.trim() === '') {
+      return res.status(400).json({ error: 'Post content is required' });
+    }
 
-    const authorUrn = `urn:li:person:${me.data.id}`;
+    // Get session cookie
+    const cookies = req.headers.cookie || '';
+    const sessionMatch = cookies.match(/session=([^;]+)/);
+    
+    if (!sessionMatch) {
+      return res.status(401).json({ error: "Not logged in" });
+    }
 
-    // Post content
-    await axios.post(
-      "https://api.linkedin.com/v2/ugcPosts",
-      {
-        author: authorUrn,
-        lifecycleState: "PUBLISHED",
-        specificContent: {
-          "com.linkedin.ugc.ShareContent": {
-            shareCommentary: { text },
-            shareMediaCategory: "NONE",
-          },
-        },
-        visibility: {
-          "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+    const sessionToken = sessionMatch[1];
+    const decoded = jwt.verify(sessionToken, process.env.JWT_SECRET);
+
+    // Check if token is expired
+    if (Date.now() > decoded.tokenExpiry) {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+
+    // Create LinkedIn post
+    const postData = {
+      author: `urn:li:person:${decoded.linkedinId}`,
+      lifecycleState: "PUBLISHED",
+      specificContent: {
+        "com.linkedin.ugc.ShareContent": {
+          shareCommentary: { text: text.trim() },
+          shareMediaCategory: "NONE",
         },
       },
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
+      visibility: {
+        "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+      },
+    };
 
-    res.json({ success: true });
+    const response = await axios.post("https://api.linkedin.com/v2/ugcPosts", postData, {
+      headers: { 
+        Authorization: `Bearer ${decoded.accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.status(200).json({ 
+      success: true,
+      postId: response.data.id,
+      message: 'Post created successfully'
+    });
+
   } catch (err) {
-    console.error(err.response?.data || err.message);
+    console.error('Post error:', err.response?.data || err.message);
     res.status(500).json({ error: "Failed to publish post" });
   }
 }
