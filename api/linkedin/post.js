@@ -1,7 +1,12 @@
-const axios = require('axios');
-const jwt = require('jsonwebtoken');
+import axios from 'axios';
+import jwt from 'jsonwebtoken';
 
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -34,7 +39,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Token expired' });
     }
 
-    // Create LinkedIn post
+    // Create LinkedIn post using current API format
     const postData = {
       author: `urn:li:person:${decoded.linkedinId}`,
       lifecycleState: "PUBLISHED",
@@ -52,7 +57,8 @@ export default async function handler(req, res) {
     const response = await axios.post("https://api.linkedin.com/v2/ugcPosts", postData, {
       headers: { 
         Authorization: `Bearer ${decoded.accessToken}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0'
       }
     });
 
@@ -64,6 +70,9 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('Post error:', err.response?.data || err.message);
-    res.status(500).json({ error: "Failed to publish post" });
+    res.status(500).json({ 
+      error: "Failed to publish post",
+      details: process.env.NODE_ENV === 'development' ? err.response?.data || err.message : undefined
+    });
   }
 }
