@@ -1,42 +1,72 @@
-import axios from "axios";
-import jwt from "jsonwebtoken";
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
 
 export default async function handler(req, res) {
-  const { code } = req.query;
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.status(400).json({ error: `LinkedIn auth error: ${error}` });
+  }
+
+  if (!code) {
+    return res.status(400).json({ error: 'No authorization code provided' });
+  }
 
   try {
-    const response = await axios.post(
+    // Exchange code for access token
+    const tokenResponse = await axios.post(
       "https://www.linkedin.com/oauth/v2/accessToken",
-      null,
+      new URLSearchParams({
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: "https://linkedin-backend-wheat.vercel.app/api/auth/linkedin/callback",
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+      }),
       {
-        params: {
-          grant_type: "authorization_code",
-          code,
-          redirect_uri:
-            "https://linkedin-backend-wheat.vercel.app/api/auth/linkedin/callback",
-          client_id: process.env.LINKEDIN_CLIENT_ID,
-          client_secret: process.env.LINKEDIN_CLIENT_SECRET,
-        },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       }
     );
 
-    const { access_token } = response.data;
+    const { access_token, expires_in } = tokenResponse.data;
 
-    // Sign JWT with LinkedIn token
-    const token = jwt.sign({ access_token }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
+    // Get user profile
+    const profileResponse = await axios.get('https://api.linkedin.com/v2/me', {
+      headers: {
+        'Authorization': `Bearer ${access_token}`
+      }
     });
 
-    // Save JWT in cookie
-    res.setHeader(
-      "Set-Cookie",
-      `session=${token}; HttpOnly; Secure; Path=/; Max-Age=3600`
-    );
+    const profile = profileResponse.data;
 
-    // Redirect back to frontend dashboard
-    res.redirect("https://your-frontend-domain.com/dashboard");
+    // Create JWT token
+    const token = jwt.sign({
+      linkedinId: profile.id,
+      firstName: profile.localizedFirstName,
+      lastName: profile.localizedLastName,
+      accessToken: access_token,
+      tokenExpiry: Date.now() + (expires_in * 1000)
+    }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    // Set secure cookie
+    res.setHeader('Set-Cookie', [
+      `session=${token}; HttpOnly; Secure; Path=/; Max-Age=${7 * 24 * 60 * 60}; SameSite=None`,
+    ]);
+
+    // Return success response
+    res.status(200).json({
+      success: true,
+      user: {
+        id: profile.id,
+        firstName: profile.localizedFirstName,
+        lastName: profile.localizedLastName
+      }
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "LinkedIn auth failed" });
+    console.error('Callback error:', err.response?.data || err.message);
+    res.status(500).json({ error: "LinkedIn authentication failed" });
   }
 }
