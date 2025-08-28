@@ -1,7 +1,12 @@
-const axios = require('axios');
-const jwt = require('jsonwebtoken');
+import axios from 'axios';
+import jwt from 'jsonwebtoken';
 
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -28,8 +33,8 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Token expired' });
     }
 
-    // Get fresh profile data
-    const profileResponse = await axios.get("https://api.linkedin.com/v2/me", {
+    // Get fresh profile data using current API
+    const profileResponse = await axios.get("https://api.linkedin.com/v2/userinfo", {
       headers: { 
         Authorization: `Bearer ${decoded.accessToken}` 
       }
@@ -38,14 +43,19 @@ export default async function handler(req, res) {
     res.status(200).json({
       success: true,
       profile: {
-        id: profileResponse.data.id,
-        firstName: profileResponse.data.localizedFirstName,
-        lastName: profileResponse.data.localizedLastName
+        id: profileResponse.data.sub,
+        firstName: profileResponse.data.given_name,
+        lastName: profileResponse.data.family_name,
+        email: profileResponse.data.email,
+        picture: profileResponse.data.picture
       }
     });
 
   } catch (err) {
     console.error('Profile error:', err.response?.data || err.message);
-    res.status(500).json({ error: "Failed to fetch profile" });
+    res.status(500).json({ 
+      error: "Failed to fetch profile",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 }
